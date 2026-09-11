@@ -4,14 +4,14 @@ function tokenBucketLimiter(options) {
 
     const currentTime = Date.now() / 1000;
 
-    if (!buckets[options.ip]) {
-        buckets[options.ip] = {
+    if (!buckets[ip]) {
+        buckets[ip] = {
             tokens: MAX_CAPACITY,
             lastRefilled: currentTime
         };
     }
 
-    const bucket = buckets[options.ip];
+    const bucket = buckets[ip];
     const timePassed = currentTime - bucket.lastRefilled;
     const tokensToAdd = timePassed * REFILL_RATE_PER_SEC;
 

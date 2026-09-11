@@ -1,6 +1,7 @@
 const express = require('express');
 const dotenv = require('dotenv');
 const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
+const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
 
 dotenv.config();
 const app = express();
@@ -11,11 +12,19 @@ app.get('/unlimited', (req, res) => {
 
 app.get('/limited', (req, res) => {
   const ip = req.ip; // Get the client's IP address
-  const isAllowed = tokenBucketLimiter({ MAX_CAPACITY: 10, REFILL_RATE_PER_SEC: 1, ip });
 
+  // Test tokenBuket here
+  // const isAllowed = tokenBucketLimiter({ MAX_CAPACITY: 10, REFILL_RATE_PER_SEC: 1, ip });
+
+  // Test fixedWindow here
+  const result = fixedWindowRateLimiter(ip);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remaining;
+  
   if (!isAllowed) {
-    return res.status(429).send('Too many requests. Please try again later.');
+    return res.status(429).send(`Too many requests. Please try again later.`);
   }  
+
   res.send('This route is rate limited.');
 });
 
