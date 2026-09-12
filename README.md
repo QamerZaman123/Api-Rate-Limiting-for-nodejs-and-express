@@ -10,7 +10,7 @@ Rate limiting is essential for protecting APIs from abuse and ensuring stable pe
 
 - ✅ **[Day 1] Token Bucket** - COMPLETED
 - ✅ **[Day 2] Fixed Window Counter** - COMPLETED
-- ⏳ **[Day 3] Sliding Window Log** - Pending
+- ✅ **[Day 3] Sliding Window Log** - COMPLETED
 - ⏳ **[Day 4] Sliding Window Counter** - Pending
 - ⏳ **[Day 5] Distributed Scaling (Redis)** - Pending
 
@@ -94,16 +94,6 @@ Time 1.5s: [█████████_] 9 tokens
 
 Time 2.5s: [██████████] 10 tokens (refilled 1)
            Request → [█████████_] 9 tokens
-```
-
-#### Configuration
-
-```javascript
-tokenBucketLimiter({
-  MAX_CAPACITY: 10,         // Max tokens in bucket
-  REFILL_RATE_PER_SEC: 1,   // Tokens added per second
-  ip: "127.0.0.1"           // Client IP address
-})
 ```
 
 #### Use Cases
@@ -197,62 +187,6 @@ Result: At the 10000ms boundary, 10 requests could be processed
         in just a few milliseconds, defeating rate limiting!
 ```
 
-### Configuration
-
-```javascript
-// Built-in constants (edit in file):
-const WINDOW_SIZE = 10 * 1000;  // 10 seconds
-const MAX_REQUESTS = 5;          // 5 requests per window
-
-// Usage:
-fixedWindowRateLimiter("127.0.0.1")
-
-// Returns:
-{
-  allowed: true,      // Whether request is allowed
-  remaining: 4        // Remaining requests in current window
-}
-```
-
-### Data Structure
-
-The implementation uses a JavaScript `Map` for per-IP storage:
-
-```javascript
-rateLimitStore = Map {
-  "127.0.0.1" => { 
-    count: 3,              // Requests made in current window
-    windowStart: 1694000000000  // When current window started
-  },
-  "192.168.1.1" => { 
-    count: 1,
-    windowStart: 1694000010000
-  }
-}
-```
-
-### Code Flow
-
-```javascript
-fixedWindowRateLimiter(clientIP):
-  1. Get current time in milliseconds
-  2. Look up client data in Map
-  3. If client doesn't exist:
-     → Initialize with count: 1, new window
-     → Return allowed: true
-  4. If client exists:
-     a. Calculate: currentTime - clientData.windowStart
-     b. If elapsed time > WINDOW_SIZE (10 seconds):
-        → Reset: count: 1, windowStart: currentTime
-        → Return allowed: true (new window)
-     c. If count < MAX_REQUESTS (5):
-        → Increment count
-        → Return allowed: true, remaining tokens
-     d. Else (count >= limit):
-        → Increment count (overflow tracking)
-        → Return allowed: false, remaining: 0
-```
-
 ### Use Cases
 
 - ✅ Simple APIs with straightforward rate limiting
@@ -306,11 +240,133 @@ app.get('/limited', (req, res) => {
 
 ---
 
-## 📅 Coming Soon
+## ✅ 3. SLIDING WINDOW LOG (COMPLETED)
 
-### Day 3: Sliding Window Log ⏳
-- Maintains a log of timestamps for precise rate limiting
-- Details will be added during implementation
+**Status:** ✅ Day 3 - Complete  
+**File:** `ratelimiters/windowLog.js`
+
+### How It Works
+
+The sliding window log algorithm maintains a **log of timestamps** for each request and uses it for precise rate limiting:
+
+- Each request stores its **exact timestamp** in a list
+- Only timestamps within the **last window** (e.g., last 10 seconds) are kept
+- Old timestamps outside the window are **filtered out (cleaned)**
+- Count requests within the window
+- If count < limit → request allowed, add timestamp; else denied
+- No reset at boundaries - pure sliding window based on actual request times
+
+### Characteristics
+
+| Aspect | Value |
+|--------|-------|
+| **Memory** | High (stores all request timestamps) |
+| **Accuracy** | Very High (exact timestamps) |
+| **Burst Support** | No (strictly enforced) |
+| **Fairness** | Excellent (no boundary spikes) |
+| **Implementation** | Moderate |
+| **Per-Window Resets** | No (sliding, not fixed) |
+
+### Visual Example
+
+```
+Now: 5.3s, Window: [4.3s - 5.3s] (1-second window)
+
+Timestamps in log:
+  [3.8s]  ✗ (outside window, will be removed)
+  [4.5s]  ✓ (within window)
+  [4.8s]  ✓ (within window)
+  [5.0s]  ✓ (within window)
+  [5.1s]  ✓ (within window)
+  [5.2s]  ✓ (within window)
+  
+Count: 5 requests in window
+
+New request at 5.3s:
+  1. Filter: Remove timestamps < 4.3s → [4.5s, 4.8s, 5.0s, 5.1s, 5.2s]
+  2. Check: 5 < MAX_REQUESTS (5)? No, DENIED
+  3. Return: allowed = false, remaining = 0
+
+Request at 4.4s (in next cycle):
+  1. Filter: Remove timestamps < 3.4s → [4.5s, 4.8s, 5.0s, 5.1s, 5.2s]
+  2. Check: 5 < 5? No, DENIED
+  
+Request at 4.25s:
+  1. Filter: Remove timestamps < 3.25s → [4.5s, 4.8s, 5.0s, 5.1s, 5.2s]
+  2. Check: 5 < 5? No, DENIED
+
+Request at 4.0s:
+  1. Filter: Remove timestamps < 3.0s → [4.5s, 4.8s, 5.0s, 5.1s, 5.2s]
+  2. Check: 5 < 5? No, DENIED
+
+Request at 3.99s (critical!):
+  1. Filter: Remove timestamps < 2.99s → [4.5s, 4.8s, 5.0s, 5.1s, 5.2s]
+     Wait, this should be: [3.99s, 4.5s, 4.8s, 5.0s, 5.1s, 5.2s]? NO!
+  
+Actually, let's recalculate: at 3.99s, window is [2.99s - 3.99s]
+  Timestamps: [4.5s, 4.8s, 5.0s, 5.1s, 5.2s] - ALL outside!
+  Filter: [] (all removed, they're in future!)
+  Count: 0 < 5, ALLOWED, add 3.99s
+  Timestamps: [3.99s]
+```
+
+The key advantage: **No boundary spike** because the window is truly sliding based on actual time, not artificial boundaries.
+
+### Use Cases
+
+- ✅ High-precision rate limiting
+- ✅ APIs where exact timestamp accuracy matters
+- ✅ Payment/transaction systems
+- ✅ Services with strict rate limits
+
+### Advantages
+
+- 🟢 **Extremely accurate** - Uses exact request timestamps
+- 🟢 **No boundary spikes** - Pure sliding window, no reset edges
+- 🟢 **Fair rate limiting** - Truly enforces limit per window
+- 🟢 **Flexible boundaries** - No artificial window reset times
+
+### Disadvantages
+
+- 🔴 **High memory** - Stores all request timestamps
+- 🔴 **Performance overhead** - Needs to filter/clean timestamps on each request
+- 🔴 **Memory leaks risk** - If cleanup is not done properly, timestamps accumulate
+- 🔴 **Complex logic** - More code to understand and maintain
+
+### Usage
+
+```javascript
+// index.js
+const slidingWindowLog = require('./ratelimiters/windowLog');
+
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = slidingWindowLog(ip);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remainingRequests;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
+### Comparison with Token Bucket & Fixed Window
+
+| Feature | Sliding Log | Token Bucket | Fixed Window |
+|---------|------------|--------------|--------------|
+| **Memory** | ❌ High | 🟡 Low | ✅ Very Low |
+| **Accuracy** | ✅ Very High | 🟡 High | 🟡 Medium |
+| **Burst Handling** | ❌ No | ✅ Yes | ❌ No |
+| **Boundary Spikes** | ✅ No | ✅ No | ❌ Yes |
+| **Fairness** | ✅ Excellent | ✅ Good | ❌ Poor |
+| **Performance** | 🟡 Moderate | ✅ Fast | ✅ Fast |
+
+---
+
+## 📅 Coming Soon
 
 ### Day 4: Sliding Window Counter ⏳
 - Hybrid approach combining fixed windows with sliding calculations
@@ -334,7 +390,7 @@ Api Rate Limiter/
 └── ratelimiters/
     ├── tokenBucket.js           # ✅ Token Bucket (Day 1)
     ├── fixedWindow.js           # ✅ Fixed Window (Day 2)
-    ├── slidingWindowLog.js      # ⏳ Sliding Window Log (Day 3)
+    ├── windowLog.js             # ✅ Sliding Window Log (Day 3)
     ├── slidingWindowCounter.js  # ⏳ Sliding Window Counter (Day 4)
     └── redisDistributed.js      # ⏳ Redis Distributed (Day 5)
 ```
@@ -381,6 +437,26 @@ app.get('/limited', (req, res) => {
 });
 ```
 
+### Sliding Window Log Usage
+
+```javascript
+// index.js
+const slidingWindowLog = require('./ratelimiters/windowLog');
+
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = slidingWindowLog(ip);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remainingRequests;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
 ---
 
 ## 🔧 Environment Variables
@@ -404,5 +480,5 @@ ISC
 
 This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm is added to understand different approaches to solving the rate-limiting problem.
 
-**Last Updated:** 2026-09-11  
-**Current Phase:** Day 2 - Fixed Window Counter ✅
+**Last Updated:** 2026-09-12  
+**Current Phase:** Day 3 - Sliding Window Log ✅

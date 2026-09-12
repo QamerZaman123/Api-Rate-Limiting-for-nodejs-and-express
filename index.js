@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
 const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
+const slidingWindowLog = require('./ratelimiters/windowLog');
 
 dotenv.config();
 const app = express();
@@ -17,9 +18,14 @@ app.get('/limited', (req, res) => {
   // const isAllowed = tokenBucketLimiter({ MAX_CAPACITY: 10, REFILL_RATE_PER_SEC: 1, ip });
 
   // Test fixedWindow here
-  const result = fixedWindowRateLimiter(ip);
+  // const result = fixedWindowRateLimiter(ip);
+  // const isAllowed = result.allowed;
+  // const remainingRequests = result.remaining;
+
+  // Test slidingWindowLog here
+  const result = slidingWindowLog(ip);
   const isAllowed = result.allowed;
-  const remainingRequests = result.remaining;
+  const remainingRequests = result.remainingRequests;
   
   if (!isAllowed) {
     return res.status(429).send(`Too many requests. Please try again later.`);
