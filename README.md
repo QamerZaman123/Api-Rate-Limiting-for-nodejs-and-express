@@ -9,7 +9,7 @@ Rate limiting is essential for protecting APIs from abuse and ensuring stable pe
 ### Progress Tracking
 
 - ✅ **[Day 1] Token Bucket** - COMPLETED
-- ⏳ **[Day 2] Fixed Window Counter** - In Progress
+- ✅ **[Day 2] Fixed Window Counter** - COMPLETED
 - ⏳ **[Day 3] Sliding Window Log** - Pending
 - ⏳ **[Day 4] Sliding Window Counter** - Pending
 - ⏳ **[Day 5] Distributed Scaling (Redis)** - Pending
@@ -126,43 +126,187 @@ tokenBucketLimiter({
 - 🔴 State lost if server restarts (single instance)
 - 🔴 Per-IP only (not distributed)
 
-#### Code Example
+#### Usage
 
 ```javascript
-const tokenBucketLimiter = require('./ratelimiters/limiters');
-
-// Allow 10 requests per second per IP
-const limiter = (req, res, next) => {
+// index.js
+app.get('/limited', (req, res) => {
   const ip = req.ip;
-  const isAllowed = tokenBucketLimiter({
-    MAX_CAPACITY: 10,
-    REFILL_RATE_PER_SEC: 1,
-    ip
-  });
+  const isAllowed = tokenBucketLimiter({ MAX_CAPACITY: 10, REFILL_RATE_PER_SEC: 1, ip });
 
   if (!isAllowed) {
-    return res.status(429).json({
-      error: 'Too many requests',
-      retryAfter: 1
-    });
-  }
-  next();
-};
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
 
-app.get('/api/data', limiter, (req, res) => {
-  res.json({ data: 'success' });
+  res.send('This route is rate limited.');
 });
 ```
 
+## ✅ 2. FIXED WINDOW COUNTER (COMPLETED)
 
+**Status:** ✅ Day 2 - Complete  
+**File:** `ratelimiters/fixedWindow.js`
+
+### How It Works
+
+The fixed window algorithm divides time into **fixed-size intervals** (windows) and counts requests in each window:
+
+- Time is divided into fixed chunks (e.g., 10-second windows)
+- Each window has a **counter** tracking requests made during that window
+- When a request arrives, check if we're still in the same window
+- If window is still active and count < limit → increment counter and allow
+- If window expires → reset counter to 1 and start new window
+- If count reaches limit → deny request
+
+### Characteristics
+
+| Aspect | Value |
+|--------|-------|
+| **Memory** | Low (just counter + timestamp per IP) |
+| **Accuracy** | Medium (can have boundary spike issues) |
+| **Burst Support** | No (strictly enforced per window) |
+| **Fairness** | Poor at window boundaries |
+| **Implementation** | Very simple |
+| **Per-Window Resets** | Yes (counter resets completely) |
+
+### Visual Example
+
+```
+Window 1 [0ms - 10000ms]:  Requests: [1, 2, 3, 4, 5]
+                           Count: 5 ✓ All allowed (limit: 5)
+                           Request 6: ✗ DENIED
+
+Window 2 [10000ms - 20000ms]: Counter resets!
+                           Request 1: ✓ Allowed (count: 1)
+                           Requests 2-5: ✓ Allowed
+                           Request 6: ✗ DENIED
+```
+
+### Boundary Spike Problem
+
+This is a known issue with fixed windows:
+
+```
+Window 1 [0ms - 10000ms]:  5 requests allowed
+
+Window boundary (10000ms): Time passes...
+
+Window 2 [10000ms - 20000ms]:  5 more requests immediately allowed
+
+Result: At the 10000ms boundary, 10 requests could be processed
+        in just a few milliseconds, defeating rate limiting!
+```
+
+### Configuration
+
+```javascript
+// Built-in constants (edit in file):
+const WINDOW_SIZE = 10 * 1000;  // 10 seconds
+const MAX_REQUESTS = 5;          // 5 requests per window
+
+// Usage:
+fixedWindowRateLimiter("127.0.0.1")
+
+// Returns:
+{
+  allowed: true,      // Whether request is allowed
+  remaining: 4        // Remaining requests in current window
+}
+```
+
+### Data Structure
+
+The implementation uses a JavaScript `Map` for per-IP storage:
+
+```javascript
+rateLimitStore = Map {
+  "127.0.0.1" => { 
+    count: 3,              // Requests made in current window
+    windowStart: 1694000000000  // When current window started
+  },
+  "192.168.1.1" => { 
+    count: 1,
+    windowStart: 1694000010000
+  }
+}
+```
+
+### Code Flow
+
+```javascript
+fixedWindowRateLimiter(clientIP):
+  1. Get current time in milliseconds
+  2. Look up client data in Map
+  3. If client doesn't exist:
+     → Initialize with count: 1, new window
+     → Return allowed: true
+  4. If client exists:
+     a. Calculate: currentTime - clientData.windowStart
+     b. If elapsed time > WINDOW_SIZE (10 seconds):
+        → Reset: count: 1, windowStart: currentTime
+        → Return allowed: true (new window)
+     c. If count < MAX_REQUESTS (5):
+        → Increment count
+        → Return allowed: true, remaining tokens
+     d. Else (count >= limit):
+        → Increment count (overflow tracking)
+        → Return allowed: false, remaining: 0
+```
+
+### Use Cases
+
+- ✅ Simple APIs with straightforward rate limiting
+- ✅ Educational purposes / learning algorithms
+- ✅ Services where boundary spikes are acceptable
+- ✅ Scenarios where simplicity outweighs precision
+
+### Advantages
+
+- 🟢 **Very simple** to implement and understand
+- 🟢 **Low memory** footprint (just 2 numbers per IP)
+- 🟢 **Fast** lookups and computations
+- 🟢 **Predictable** behavior within windows
+- 🟢 **Clean resets** at window boundaries
+
+### Disadvantages
+
+- 🔴 **Boundary spikes** - Can allow 2x rate at window edges
+- 🔴 **No burst handling** - Strictly enforced, no smoothing
+- 🔴 **Coarse-grained** - All requests identical, no gradation
+- 🔴 **Inflexible** - No carry-over of unused requests
+
+### Usage
+
+```javascript
+// index.js
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = fixedWindowRateLimiter(ip);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remaining;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
+### Comparison with Token Bucket
+
+| Feature | Fixed Window | Token Bucket |
+|---------|--------------|--------------|
+| **Implementation** | Simpler | Slightly more complex |
+| **Memory** | Lower | Low |
+| **Burst Handling** | ❌ No | ✅ Yes |
+| **Boundary Spikes** | ❌ Yes | ✅ No |
+| **Fairness** | ❌ Poor | ✅ Good |
+| **Use in Production** | Limited | Wide |
 
 ---
 
 ## 📅 Coming Soon
-
-### Day 2: Fixed Window Counter ⏳
-- Divides time into fixed intervals and counts requests per interval
-- Details will be added during implementation
 
 ### Day 3: Sliding Window Log ⏳
 - Maintains a log of timestamps for precise rate limiting
@@ -188,85 +332,52 @@ Api Rate Limiter/
 ├── .env                         # Environment variables
 │
 └── ratelimiters/
-    ├── limiters.js              # ✅ Token Bucket (DONE)
-    ├── fixedWindowCounter.js    # ⏳ TODO
-    ├── slidingWindowLog.js      # ⏳ TODO
-    ├── slidingWindowCounter.js  # ⏳ TODO
-    └── redisDistributed.js      # ⏳ TODO
+    ├── tokenBucket.js           # ✅ Token Bucket (Day 1)
+    ├── fixedWindow.js           # ✅ Fixed Window (Day 2)
+    ├── slidingWindowLog.js      # ⏳ Sliding Window Log (Day 3)
+    ├── slidingWindowCounter.js  # ⏳ Sliding Window Counter (Day 4)
+    └── redisDistributed.js      # ⏳ Redis Distributed (Day 5)
 ```
 
 ---
 
 ## � Usage Examples
 
-### Basic Token Bucket Usage
+### Token Bucket Usage
 
 ```javascript
-const express = require('express');
-const tokenBucketLimiter = require('./ratelimiters/limiters');
+// index.js
+const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
 
-const app = express();
-
-// Middleware to apply rate limiting
-const rateLimitMiddleware = (req, res, next) => {
+app.get('/limited', (req, res) => {
   const ip = req.ip;
-  const isAllowed = tokenBucketLimiter({
-    MAX_CAPACITY: 10,
-    REFILL_RATE_PER_SEC: 1,
-    ip
-  });
+  const isAllowed = tokenBucketLimiter({ MAX_CAPACITY: 10, REFILL_RATE_PER_SEC: 1, ip });
 
   if (!isAllowed) {
-    return res.status(429).json({
-      error: 'Too many requests',
-      message: 'Please slow down your requests',
-      retryAfter: 1
-    });
-  }
-  
-  next();
-};
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
 
-// Apply to specific route
-app.get('/api/users', rateLimitMiddleware, (req, res) => {
-  res.json({ users: [...] });
+  res.send('This route is rate limited.');
 });
-
-// Or apply globally
-app.use(rateLimitMiddleware);
 ```
 
-### Different Limits for Different Endpoints
+### Fixed Window Usage
 
 ```javascript
-// Strict limit for login
-app.post('/auth/login', (req, res, next) => {
-  const isAllowed = tokenBucketLimiter({
-    MAX_CAPACITY: 5,
-    REFILL_RATE_PER_SEC: 0.2,  // 1 request per 5 seconds
-    ip: req.ip
-  });
-  
-  if (!isAllowed) {
-    return res.status(429).json({ error: 'Too many login attempts' });
-  }
-  
-  // Login logic...
-});
+// index.js
+const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
 
-// Generous limit for read operations
-app.get('/api/data', (req, res, next) => {
-  const isAllowed = tokenBucketLimiter({
-    MAX_CAPACITY: 100,
-    REFILL_RATE_PER_SEC: 10,  // 10 requests per second
-    ip: req.ip
-  });
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = fixedWindowRateLimiter(ip);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remaining;
   
   if (!isAllowed) {
-    return res.status(429).json({ error: 'Rate limit exceeded' });
-  }
-  
-  // Data retrieval logic...
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
 });
 ```
 
@@ -291,7 +402,7 @@ ISC
 
 ## 📝 Notes
 
-This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm will be added to understand different approaches to solving the rate-limiting problem.
+This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm is added to understand different approaches to solving the rate-limiting problem.
 
-**Last Updated:** 2026-09-10  
-**Current Phase:** Day 1 - Token Bucket ✅
+**Last Updated:** 2026-09-11  
+**Current Phase:** Day 2 - Fixed Window Counter ✅
