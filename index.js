@@ -1,8 +1,9 @@
 const express = require('express');
 const dotenv = require('dotenv');
-const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
-const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
-const slidingWindowLog = require('./ratelimiters/windowLog');
+// const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
+// const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
+// const slidingWindowLog = require('./ratelimiters/slidingWindowLog');
+const slidingWindowCounter = require('./ratelimiters/slidingWindowCounter');
 
 dotenv.config();
 const app = express();
@@ -23,15 +24,20 @@ app.get('/limited', (req, res) => {
   // const remainingRequests = result.remaining;
 
   // Test slidingWindowLog here
-  const result = slidingWindowLog(ip);
-  const isAllowed = result.allowed;
-  const remainingRequests = result.remainingRequests;
+  // const result = slidingWindowLog(ip);
+  // const isAllowed = result.allowed;
+  // const remainingRequests = result.remainingRequests;
   
+  //Test slidingWindowCounter here
+  const result = slidingWindowCounter(ip)
+  const isAllowed = result.allowed
+  const remaining = result.remaining
+
   if (!isAllowed) {
-    return res.status(429).send(`Too many requests. Please try again later.`);
+    return res.status(429).send(`Too many requests. Please try again later. remains: ${remaining}`);
   }  
 
-  res.send('This route is rate limited.');
+  res.send('This route is rate limited.'+ remaining);
 });
 
 app.listen(process.env.PORT, () => {

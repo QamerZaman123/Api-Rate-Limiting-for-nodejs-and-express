@@ -11,8 +11,9 @@ Rate limiting is essential for protecting APIs from abuse and ensuring stable pe
 - ✅ **[Day 1] Token Bucket** - COMPLETED
 - ✅ **[Day 2] Fixed Window Counter** - COMPLETED
 - ✅ **[Day 3] Sliding Window Log** - COMPLETED
-- ⏳ **[Day 4] Sliding Window Counter** - Pending
-- ⏳ **[Day 5] Distributed Scaling (Redis)** - Pending
+- ✅ **[Day 4] Sliding Window Counter** - COMPLETED
+- ⏳ **[Day 5] Leaky Bucket (as a meter)** - Pending
+- ⏳ **[Day 6] Leaky Bucket (as a queue)** - Pending
 
 ---
 
@@ -366,15 +367,129 @@ app.get('/limited', (req, res) => {
 
 ---
 
+## ✅ 4. SLIDING WINDOW COUNTER (COMPLETED)
+
+**Status:** ✅ Day 4 - Complete  
+**File:** `ratelimiters/slidingWindowCounter.js`
+
+### How It Works
+
+The sliding window counter algorithm is a **hybrid approach** combining fixed windows with sliding calculations:
+
+- Maintains **two adjacent window counters** (previous and current)
+- Time window divided into chunks (e.g., 10-second windows)
+- Tracks when each window started (`windowStart`)
+- Uses **weighted interpolation** to blend previous and current window counts
+- Smooths boundary spikes by calculating proportion of time in each window
+- If weighted estimate < limit → request allowed; else denied
+- Much lower memory than Sliding Window Log, avoids Fixed Window boundary issues
+
+### Characteristics
+
+| Aspect | Value |
+|--------|-------|
+| **Memory** | Low (just 3 counters per IP) |
+| **Accuracy** | High (weighted interpolation) |
+| **Burst Support** | No (strictly enforced) |
+| **Fairness** | Good (no sharp boundary spikes) |
+| **Implementation** | Moderate |
+| **Per-Window Resets** | Partial (rolls windows gradually) |
+
+### Visual Example
+
+```
+Setup: WINDOW_SIZE = 1000ms, MAX_REQUESTS = 10
+
+Window 1 [0ms - 1000ms]:  previousCount = 0, currentCount = 8
+Window 2 [1000ms - 2000ms]: previousCount = 8, currentCount = 0
+
+At t=1300ms (30% into Window 2):
+  timeIntoWindow = 300ms
+  previousWindowWeight = (1000 - 300) / 1000 = 0.7
+  estimateCount = (8 × 0.7) + 0 = 5.6
+  
+  Request allowed? 5.6 < 10 ✓ YES
+  remaining = 10 - ceil(5.6) - 1 = 10 - 6 - 1 = 3
+
+At t=1500ms (50% into Window 2):
+  timeIntoWindow = 500ms
+  previousWindowWeight = (1000 - 500) / 1000 = 0.5
+  estimateCount = (8 × 0.5) + 2 = 6.0  (assuming 2 new requests)
+  
+  Request allowed? 6.0 < 10 ✓ YES
+  remaining = 10 - ceil(6.0) - 1 = 2
+
+At t=1900ms (90% into Window 2):
+  timeIntoWindow = 900ms
+  previousWindowWeight = (1000 - 900) / 1000 = 0.1
+  estimateCount = (8 × 0.1) + 5 = 5.8  (assuming 5 new requests)
+  
+  Request allowed? 5.8 < 10 ✓ YES
+
+Key advantage: Smooth transition between windows instead of hard reset!
+```
+
+### Use Cases
+
+- ✅ Production APIs needing good accuracy without high memory
+- ✅ Services avoiding boundary spike issues
+- ✅ CDN and content delivery systems
+- ✅ Mobile app APIs with moderate-to-high traffic
+
+### Advantages
+
+- 🟢 **Low memory** - Only stores 3 values per IP (like Fixed Window)
+- 🟢 **Smooth boundaries** - Weighted calculation avoids spikes
+- 🟢 **High accuracy** - Better than Fixed Window boundaries
+- 🟢 **Balanced performance** - Fast computation vs. accuracy trade-off
+- 🟢 **Production-ready** - Used by many API platforms
+
+### Disadvantages
+
+- 🔴 **Still not perfect** - Approximation, not exact like Sliding Window Log
+- 🔴 **Complex logic** - Harder to understand than Fixed Window
+- 🔴 **Weighted calculation overhead** - More math per request than Fixed Window
+- 🔴 **No burst support** - Strictly enforced like Fixed Window
+
+### Usage
+
+```javascript
+// index.js
+const slidingWindowCounter = require('./ratelimiters/slidingWindowCounter');
+
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = slidingWindowCounter(ip);
+  const isAllowed = result.allowed;
+  const remaining = result.remaining;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
+### Comparison: All Four Algorithms
+
+| Feature | Sliding Counter | Sliding Log | Token Bucket | Fixed Window |
+|---------|-----------------|-------------|--------------|--------------|
+| **Memory** | ✅ Very Low | ❌ High | 🟡 Low | ✅ Very Low |
+| **Accuracy** | 🟡 High | ✅ Very High | 🟡 High | 🟡 Medium |
+| **Burst Handling** | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Boundary Spikes** | ✅ Smooth | ✅ None | ✅ None | ❌ Yes |
+| **Fairness** | ✅ Good | ✅ Excellent | ✅ Good | ❌ Poor |
+| **Performance** | ✅ Fast | 🟡 Moderate | ✅ Fast | ✅ Fast |
+| **Complexity** | 🟡 Moderate | 🔴 Complex | ✅ Simple | ✅ Simple |
+| **Best For** | Production | High-precision | Burst traffic | Simple APIs |
+
+---
+
 ## 📅 Coming Soon
 
-### Day 4: Sliding Window Counter ⏳
-- Hybrid approach combining fixed windows with sliding calculations
-- Details will be added during implementation
-
-### Day 5: Distributed Scaling (Redis) ⏳
-- Centralized state management for multi-server deployments
-- Details will be added during implementation
+### Day 5: Leaky Bucket (as a meter)⏳
+### Day 6: Leaky Bucket (as a queue)⏳
 
 ---
 
@@ -391,7 +506,7 @@ Api Rate Limiter/
     ├── tokenBucket.js           # ✅ Token Bucket (Day 1)
     ├── fixedWindow.js           # ✅ Fixed Window (Day 2)
     ├── windowLog.js             # ✅ Sliding Window Log (Day 3)
-    ├── slidingWindowCounter.js  # ⏳ Sliding Window Counter (Day 4)
+    ├── slidingWindowCounter.js  # ✅ Sliding Window Counter (Day 4)
     └── redisDistributed.js      # ⏳ Redis Distributed (Day 5)
 ```
 
@@ -457,6 +572,26 @@ app.get('/limited', (req, res) => {
 });
 ```
 
+### Sliding Window Counter Usage
+
+```javascript
+// index.js
+const slidingWindowCounter = require('./ratelimiters/slidingWindowCounter');
+
+app.get('/limited', (req, res) => {
+  const ip = req.ip;
+  const result = slidingWindowCounter(ip);
+  const isAllowed = result.allowed;
+  const remaining = result.remaining;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
 ---
 
 ## 🔧 Environment Variables
@@ -480,5 +615,5 @@ ISC
 
 This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm is added to understand different approaches to solving the rate-limiting problem.
 
-**Last Updated:** 2026-09-12  
-**Current Phase:** Day 3 - Sliding Window Log ✅
+**Last Updated:** 2026-09-13  
+**Current Phase:** Day 4 - Sliding Window Counter ✅
