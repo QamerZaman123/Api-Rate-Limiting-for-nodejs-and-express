@@ -3,7 +3,9 @@ const dotenv = require('dotenv');
 // const tokenBucketLimiter = require('./ratelimiters/tokenBucket');
 // const fixedWindowRateLimiter = require('./ratelimiters/fixedWindow');
 // const slidingWindowLog = require('./ratelimiters/slidingWindowLog');
-const slidingWindowCounter = require('./ratelimiters/slidingWindowCounter');
+// const slidingWindowCounter = require('./ratelimiters/slidingWindowCounter');
+const leakyBucketLimiter = require('./ratelimiters/leakyBucket(meter)');
+
 
 dotenv.config();
 const app = express();
@@ -29,9 +31,14 @@ app.get('/limited', (req, res) => {
   // const remainingRequests = result.remainingRequests;
   
   //Test slidingWindowCounter here
-  const result = slidingWindowCounter(ip)
-  const isAllowed = result.allowed
-  const remaining = result.remaining
+  // const result = slidingWindowCounter(ip)
+  // const isAllowed = result.allowed
+  // const remaining = result.remaining
+
+  // Test leakyBucket here
+  const result = leakyBucketLimiter(ip);
+  const isAllowed = result.allowed;
+  const remaining = result.remainingRequests;
 
   if (!isAllowed) {
     return res.status(429).send(`Too many requests. Please try again later. remains: ${remaining}`);

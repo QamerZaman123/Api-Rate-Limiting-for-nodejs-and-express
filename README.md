@@ -4,7 +4,7 @@ A comprehensive implementation of multiple rate-limiting algorithms for Node.js/
 
 ## 📊 Project Overview
 
-Rate limiting is essential for protecting APIs from abuse and ensuring stable performance. This project implements **5 different rate-limiting algorithms**, each with unique trade-offs in terms of memory usage, accuracy, and computational complexity. Details for each algorithm will be added as they are implemented.
+Rate limiting is essential for protecting APIs from abuse and ensuring stable performance. This project implements **6 different rate-limiting algorithms**, each with unique trade-offs in terms of memory usage, accuracy, and computational complexity. Details for each algorithm will be added as they are implemented.
 
 ### Progress Tracking
 
@@ -12,8 +12,8 @@ Rate limiting is essential for protecting APIs from abuse and ensuring stable pe
 - ✅ **[Day 2] Fixed Window Counter** - COMPLETED
 - ✅ **[Day 3] Sliding Window Log** - COMPLETED
 - ✅ **[Day 4] Sliding Window Counter** - COMPLETED
-- ⏳ **[Day 5] Leaky Bucket (as a meter)** - Pending
-- ⏳ **[Day 6] Leaky Bucket (as a queue)** - Pending
+- ✅ **[Day 5] Leaky Bucket (Meter)** - COMPLETED
+- ⏳ **[Day 6] Leaky Bucket (Queue)** - Pending
 
 ---
 
@@ -486,10 +486,127 @@ app.get('/limited', (req, res) => {
 
 ---
 
+## ✅ 5. LEAKY BUCKET (METER) (COMPLETED)
+
+**Status:** ✅ Day 5 - Complete  
+**File:** `ratelimiters/leakyBucket(meter).js`
+
+### How It Works
+
+The leaky bucket (meter mode) algorithm models rate limiting as a bucket with a constant **leak rate**:
+
+- Bucket has a **fixed capacity** (max requests that can be held)
+- Requests are **added to the bucket** when they arrive
+- Bucket **leaks at a constant rate** (e.g., 1 request per second)
+- If bucket is full → request is **rejected** ✗
+- If bucket has space → request is **accepted** ✓
+- Bucket automatically empties at the leak rate regardless of new requests
+- Creates a **smooth, predictable traffic flow**
+
+### Characteristics
+
+| Aspect | Value |
+|--------|-------|
+| **Memory** | Low (just counter + timestamp per IP) |
+| **Accuracy** | High (constant rate) |
+| **Burst Support** | Limited (depends on capacity) |
+| **Fairness** | Excellent (smooth output rate) |
+| **Implementation** | Moderate |
+| **Output Rate** | Constant (predictable) |
+
+### Visual Example
+
+```
+Setup: BUCKET_CAPACITY = 5, LEAK_RATE = 1 req/sec
+
+Timeline:
+  t=0s    Bucket: [5 slots] Request 1 arrives → [4] allowed
+  t=0.2s  Bucket: [4] Request 2 arrives → [3] allowed
+  t=0.5s  Bucket: [3] Request 3 arrives → [2] allowed
+  t=0.8s  Bucket: [2] Request 4 arrives → [1] allowed
+  t=1.0s  Bucket: [1] Request 5 arrives → [0] allowed
+  t=1.1s  Bucket: [0] Request 6 arrives → REJECTED (bucket full)
+  
+  t=1.2s  Bucket leaks at 1 req/sec
+          1.2s elapsed → 1 request leaked
+          Bucket: [1] Request 7 arrives → [0] allowed
+  
+  t=2.0s  2 seconds total elapsed → 2 requests leaked
+          Bucket: [1] (if no new requests)
+  
+  t=3.0s  3 seconds elapsed → 3 requests leaked
+          Bucket: [2] (capacity refills to max of 5)
+          Actually, bucket would be: min(5, 0 + 3) = 3
+          
+Output: Smooth, predictable rate of ~1 request per second
+```
+
+### Key Difference from Token Bucket
+
+- **Token Bucket**: Tokens accumulate, allowing bursts
+- **Leaky Bucket (Meter)**: Requests leak at constant rate, smoothing traffic
+
+### Use Cases
+
+- ✅ Smoothing traffic flow to backend services
+- ✅ Protecting downstream systems from spikes
+- ✅ APIs requiring consistent, predictable request rates
+- ✅ Video streaming, data processing pipelines
+
+### Advantages
+
+- 🟢 **Smooth output** - Constant leak rate prevents spikes
+- 🟢 **Predictable** - Downstream services get steady load
+- 🟢 **Low memory** - Just counter + timestamp per IP
+- 🟢 **Protects backends** - No sudden traffic bursts
+- 🟢 **Fair queuing** - All clients get proportional treatment
+
+### Disadvantages
+
+- 🔴 **No burst tolerance** - Rejects requests when full
+- 🔴 **Less user-friendly** - Users get rejected even with small queues
+- 🔴 **Fixed output rate** - Can't adapt to available capacity
+- 🔴 **Wasteful if unused** - Leaks even if backend is idle
+
+### Usage
+
+```javascript
+// index.js
+const leakyBucketLimiter = require('./ratelimiters/leakyBucket(meter)');
+
+app.get('/limited', (req, res) => {
+  const clientId = req.ip;
+  const result = leakyBucketLimiter(clientId);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remainingRequests;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
+### Comparison: Five Algorithms
+
+| Feature | Leaky Bucket | Sliding Counter | Sliding Log | Token Bucket | Fixed Window |
+|---------|-------------|-----------------|-------------|--------------|--------------|
+| **Memory** | ✅ Very Low | ✅ Very Low | ❌ High | 🟡 Low | ✅ Very Low |
+| **Accuracy** | ✅ High | 🟡 High | ✅ Very High | 🟡 High | 🟡 Medium |
+| **Burst Support** | 🟡 Limited | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Output Smoothing** | ✅ Excellent | 🟡 Good | 🟡 Good | ❌ Bursty | ❌ Bursty |
+| **Fairness** | ✅ Excellent | ✅ Good | ✅ Excellent | ✅ Good | ❌ Poor |
+| **Performance** | ✅ Fast | ✅ Fast | 🟡 Moderate | ✅ Fast | ✅ Fast |
+| **Best For** | Traffic smoothing | Production | High precision | Burst traffic | Simple APIs |
+
+---
+
 ## 📅 Coming Soon
 
-### Day 5: Leaky Bucket (as a meter)⏳
-### Day 6: Leaky Bucket (as a queue)⏳
+### Day 6: Leaky Bucket (Queue) ⏳
+- Queue-based implementation that buffers and processes requests
+- Details will be added during implementation
 
 ---
 
@@ -507,7 +624,8 @@ Api Rate Limiter/
     ├── fixedWindow.js           # ✅ Fixed Window (Day 2)
     ├── windowLog.js             # ✅ Sliding Window Log (Day 3)
     ├── slidingWindowCounter.js  # ✅ Sliding Window Counter (Day 4)
-    └── redisDistributed.js      # ⏳ Redis Distributed (Day 5)
+    ├── leakyBucket(meter).js    # ✅ Leaky Bucket - Meter (Day 5)
+    └── redisDistributed.js      # ⏳ Redis Distributed (Day 6)
 ```
 
 ---
@@ -592,6 +710,26 @@ app.get('/limited', (req, res) => {
 });
 ```
 
+### Leaky Bucket (Meter) Usage
+
+```javascript
+// index.js
+const leakyBucketLimiter = require('./ratelimiters/leakyBucket(meter)');
+
+app.get('/limited', (req, res) => {
+  const clientId = req.ip;
+  const result = leakyBucketLimiter(clientId);
+  const isAllowed = result.allowed;
+  const remainingRequests = result.remainingRequests;
+  
+  if (!isAllowed) {
+    return res.status(429).send(`Too many requests. Please try again later.`);
+  }  
+
+  res.send('This route is rate limited.');
+});
+```
+
 ---
 
 ## 🔧 Environment Variables
@@ -615,5 +753,5 @@ ISC
 
 This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm is added to understand different approaches to solving the rate-limiting problem.
 
-**Last Updated:** 2026-09-13  
-**Current Phase:** Day 4 - Sliding Window Counter ✅
+**Last Updated:** 2026-09-14  
+**Current Phase:** Day 5 - Leaky Bucket (Meter) ✅
