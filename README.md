@@ -13,7 +13,7 @@ Rate limiting is essential for protecting APIs from abuse and ensuring stable pe
 - ✅ **[Day 3] Sliding Window Log** - COMPLETED
 - ✅ **[Day 4] Sliding Window Counter** - COMPLETED
 - ✅ **[Day 5] Leaky Bucket (Meter)** - COMPLETED
-- ⏳ **[Day 6] Leaky Bucket (Queue)** - Pending
+- ✅ **[Day 6] Leaky Bucket (Queue)** - COMPLETED
 
 ---
 
@@ -602,11 +602,117 @@ app.get('/limited', (req, res) => {
 
 ---
 
-## 📅 Coming Soon
+## ✅ 6. LEAKY BUCKET (QUEUE) (COMPLETED)
 
-### Day 6: Leaky Bucket (Queue) ⏳
-- Queue-based implementation that buffers and processes requests
-- Details will be added during implementation
+**Status:** ✅ Day 6 - Complete  
+**File:** `ratelimiters/leakyBucket(queue).js`
+
+### How It Works
+
+The queue-based leaky bucket algorithm schedules each request into a queue and releases it at a fixed processing rate:
+
+- Each client has a **queue** with a maximum capacity
+- Requests are **accepted only if the queue is not full**
+- A request is assigned a **processing time** based on the previous request
+- Old queued requests are drained over time at a fixed interval
+- If the queue is full, requests are **rejected** ✗
+- This creates a **steady, regulated release rate** over time
+
+### Characteristics
+
+| Aspect | Value |
+|--------|-------|
+| **Memory** | Low (queue per IP) |
+| **Accuracy** | High for steady flow |
+| **Burst Support** | Limited by queue size |
+| **Fairness** | Excellent |
+| **Implementation** | Moderate |
+| **Output Rate** | Constant and scheduled |
+
+### Visual Example
+
+```
+Setup: QUEUE_CAPACITY = 5, PROCESSING_INTERVAL = 1000ms
+
+Request 1 arrives at t=0ms → allowed, queueSize = 1, delay = 0ms
+Request 2 arrives at t=0ms → allowed, queueSize = 2, delay = 1000ms
+Request 3 arrives at t=0ms → allowed, queueSize = 3, delay = 2000ms
+Request 4 arrives at t=0ms → allowed, queueSize = 4, delay = 3000ms
+Request 5 arrives at t=0ms → allowed, queueSize = 5, delay = 4000ms
+Request 6 arrives at t=0ms → rejected because queue is full
+
+At t=1000ms → first queued request is processed and queue drops from 5 to 4
+At t=2000ms → queue drops from 4 to 3
+At t=3000ms → queue drops from 3 to 2
+At t=4000ms → queue drops from 2 to 1
+
+Result: Requests are released steadily, one per second, instead of all at once.
+```
+
+### Use Cases
+
+- ✅ API traffic smoothing
+- ✅ Protecting downstream services from sudden bursts
+- ✅ Queuing background job requests
+- ✅ Maintaining a predictable request throughput
+
+### Advantages
+
+- 🟢 **Steady throughput** - Requests leave at a constant rate
+- 🟢 **Smooths traffic spikes** - Prevents sudden overloads
+- 🟢 **Good fairness** - Requests wait in order
+- 🟢 **Predictable** - Easy to reason about the processing rate
+- 🟢 **Protects backend** - Avoids sudden bursts reaching the server
+
+### Disadvantages
+
+- 🔴 **Queueing delay** - Some users wait before their request is processed
+- 🔴 **Capacity is limited** - Once full, requests are rejected
+- 🔴 **More complex than fixed window** - Requires scheduling state
+- 🔴 **Not ideal for very latency-sensitive APIs**
+
+### Usage
+
+```javascript
+// index.js
+const leakyBucketQueue = require('./ratelimiters/leakyBucket(queue)');
+
+app.post('/limited/v2', (req, res) => {
+  const ip = req.ip;
+  const result = leakyBucketQueue(ip);
+
+  if (!result.allowed) {
+    return res.status(429).json({
+      message: 'Too many requests. Queue is full.',
+      queueSize: result.queueSize,
+    });
+  }
+
+  const queueSizeAtAdmission = result.queueSize;
+  const scheduledDelay = result.delay;
+
+  setTimeout(() => {
+    res.status(201).json({
+      message: 'User registered successfully',
+      user: req.body,
+      queueSize: queueSizeAtAdmission,
+      delayMs: scheduledDelay,
+    });
+  }, scheduledDelay);
+});
+```
+
+### Comparison: All Six Algorithms
+
+| Feature | Queue Leaky Bucket | Meter Leaky Bucket | Sliding Counter | Sliding Log | Token Bucket | Fixed Window |
+|---------|--------------------|-------------------|-----------------|-------------|--------------|--------------|
+| **Memory** | 🟡 Low | ✅ Very Low | ✅ Very Low | ❌ High | 🟡 Low | ✅ Very Low |
+| **Accuracy** | ✅ High | ✅ High | 🟡 High | ✅ Very High | 🟡 High | 🟡 Medium |
+| **Burst Support** | 🟡 Limited | 🟡 Limited | ❌ No | ❌ No | ✅ Yes | ❌ No |
+| **Output Smoothing** | ✅ Excellent | ✅ Excellent | 🟡 Good | 🟡 Good | ❌ Bursty | ❌ Bursty |
+| **Fairness** | ✅ Excellent | ✅ Excellent | ✅ Good | ✅ Excellent | ✅ Good | ❌ Poor |
+| **Performance** | ✅ Fast | ✅ Fast | ✅ Fast | 🟡 Moderate | ✅ Fast | ✅ Fast |
+| **Best For** | Queued traffic shaping | Smooth throughput | Production APIs | Precision | Burst traffic | Simple APIs |
 
 ---
 
@@ -625,7 +731,8 @@ Api Rate Limiter/
     ├── windowLog.js             # ✅ Sliding Window Log (Day 3)
     ├── slidingWindowCounter.js  # ✅ Sliding Window Counter (Day 4)
     ├── leakyBucket(meter).js    # ✅ Leaky Bucket - Meter (Day 5)
-    └── redisDistributed.js      # ⏳ Redis Distributed (Day 6)
+    ├── leakyBucket(queue).js    # ✅ Leaky Bucket - Queue (Day 6)
+    └── redisDistributed.js      # ⏳ Redis Distributed (Future)
 ```
 
 ---
@@ -730,6 +837,37 @@ app.get('/limited', (req, res) => {
 });
 ```
 
+### Leaky Bucket (Queue) Usage
+
+```javascript
+// index.js
+const leakyBucketQueue = require('./ratelimiters/leakyBucket(queue)');
+
+app.post('/limited/v2', (req, res) => {
+  const ip = req.ip;
+  const result = leakyBucketQueue(ip);
+
+  if (!result.allowed) {
+    return res.status(429).json({
+      message: 'Too many requests. Queue is full.',
+      queueSize: result.queueSize,
+    });
+  }
+
+  const queueSizeAtAdmission = result.queueSize;
+  const scheduledDelay = result.delay;
+
+  setTimeout(() => {
+    res.status(201).json({
+      message: 'User registered successfully',
+      user: req.body,
+      queueSize: queueSizeAtAdmission,
+      delayMs: scheduledDelay,
+    });
+  }, scheduledDelay);
+});
+```
+
 ---
 
 ## 🔧 Environment Variables
@@ -753,5 +891,5 @@ ISC
 
 This project is designed for **learning and educational purposes**. Each day, a new rate-limiting algorithm is added to understand different approaches to solving the rate-limiting problem.
 
-**Last Updated:** 2026-09-14  
-**Current Phase:** Day 5 - Leaky Bucket (Meter) ✅
+**Last Updated:** 2026-09-15  
+**Current Phase:** Day 6 - Leaky Bucket (Queue) ✅
